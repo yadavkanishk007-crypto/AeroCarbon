@@ -24,12 +24,147 @@ import {
   mockBadges,
   mockEcoHabits
 } from '../__mocks__/userFootprintMock';
+import { BASELINES } from '../utils/constants';
 
+/**
+ * Loads a user profile from Supabase.
+ * @param userId Unique user authentication ID
+ */
+async function fetchDbProfile(userId: string): Promise<UserProfile | null> {
+  const { data: dbProfile, error } = await supabase!
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .single();
+
+  if (error || !dbProfile) return null;
+
+  return {
+    onboarding_completed: dbProfile.onboarding_completed,
+    base_diet: dbProfile.base_diet as DietType,
+    base_travel_mode: dbProfile.base_travel_mode as CommuteMode,
+    base_travel_km: Number(dbProfile.base_travel_km),
+    base_home_energy_kwh: Number(dbProfile.base_home_energy_kwh),
+    base_heating_source: dbProfile.base_heating_source as HeatingSource,
+    base_flights: Number(dbProfile.base_flights ?? 0),
+    base_recycles: Boolean(dbProfile.base_recycles ?? true),
+    base_annual_emissions: Number(dbProfile.base_annual_emissions)
+  };
+}
+
+/**
+ * Loads user carbon logs from Supabase.
+ * @param userId Unique user authentication ID
+ */
+async function fetchDbLogs(userId: string): Promise<CarbonLog[] | null> {
+  const { data: dbLogs, error } = await supabase!
+    .from('carbon_logs')
+    .select('*')
+    .eq('user_id', userId)
+    .order('date', { ascending: true });
+
+  if (error || !dbLogs || dbLogs.length === 0) return null;
+
+  return dbLogs.map(item => ({
+    id: item.id,
+    user_id: item.user_id,
+    date: item.date,
+    commute_mode: item.commute_mode as CommuteMode,
+    commute_distance: Number(item.commute_distance),
+    commute_emissions: Number(item.commute_emissions),
+    diet_type: item.diet_type as DietType,
+    diet_emissions: Number(item.diet_emissions),
+    energy_kwh: Number(item.energy_kwh),
+    heating_source: item.heating_source as HeatingSource,
+    heating_kwh: Number(item.heating_kwh ?? 0),
+    energy_emissions: Number(item.energy_emissions),
+    total_emissions: Number(item.total_emissions)
+  }));
+}
+
+/**
+ * Loads user unlocked badges from Supabase.
+ * @param userId Unique user authentication ID
+ */
+async function fetchDbBadges(userId: string): Promise<{ badge_id: string; awarded_at: string }[] | null> {
+  const { data: dbBadges, error } = await supabase!
+    .from('user_badges')
+    .select('badge_id, awarded_at')
+    .eq('user_id', userId);
+
+  if (error || !dbBadges) return null;
+  return dbBadges;
+}
+
+/**
+ * Checks conditions to unlock the Eco Commuter achievement.
+ * @param allLogs Combined logs list
+ */
+function checkEcoCommuter(allLogs: CarbonLog[]): boolean {
+  const ecoCommutesCount = allLogs.filter(log =>
+    ['ev_car', 'bus', 'train', 'bicycle', 'walking'].includes(log.commute_mode) &&
+    (log.commute_distance > 0 || ['bicycle', 'walking'].includes(log.commute_mode))
+  ).length;
+  return ecoCommutesCount >= 3;
+}
+
+/**
+ * Checks conditions to unlock the Green Plate achievement.
+ * @param allLogs Combined logs list
+ */
+function checkGreenPlate(allLogs: CarbonLog[]): boolean {
+  let vegetarianStreak = 0;
+  for (let i = allLogs.length - 1; i >= 0; i--) {
+    if (['vegan', 'vegetarian'].includes(allLogs[i].diet_type)) {
+      vegetarianStreak++;
+      if (vegetarianStreak >= 3) return true;
+    } else {
+      vegetarianStreak = 0; // broken streak
+    }
+  }
+  return false;
+}
+
+/**
+ * Checks conditions to unlock the Carbon Cutter achievement.
+ * @param latestLog Latest added log entry
+ * @param dailyBaseAverage Daily baseline target average
+ */
+function checkCarbonCutter(latestLog: CarbonLog, dailyBaseAverage: number): boolean {
+  return dailyBaseAverage > 0 && latestLog.total_emissions <= dailyBaseAverage * 0.7;
+}
+
+/**
+ * Checks conditions to unlock the Streak Master achievement.
+ * @param allLogs Combined logs list
+ */
+function checkStreakMaster(allLogs: CarbonLog[]): boolean {
+  if (allLogs.length < 5) return false;
+  let consecutiveDays = 1;
+  for (let i = allLogs.length - 1; i > 0; i--) {
+    const d1 = new Date(allLogs[i].date);
+    const d2 = new Date(allLogs[i - 1].date);
+    const diffTime = Math.abs(d1.getTime() - d2.getTime());
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    if (diffDays === 1) {
+      consecutiveDays++;
+      if (consecutiveDays >= 5) return true;
+    } else if (diffDays > 1) {
+      consecutiveDays = 1; // reset streak
+    }
+  }
+  return false;
+}
+
+/**
+ * Custom React Hook to manage state, synchronization, and analytics of carbon tracking metrics.
+ * Supports LocalStorage caching with transparent Supabase database syncing.
+ */
 export function useCarbonData() {
   const [profile, setProfile] = useState<UserProfile>(() => {
     const local = localStorage.getItem('carbon_tracker_profile');
     if (local) return JSON.parse(local);
-    // Uncompleted onboarding profile by default
     return {
       onboarding_completed: false,
       base_diet: 'omnivore',
@@ -46,7 +181,6 @@ export function useCarbonData() {
   const [logs, setLogs] = useState<CarbonLog[]>(() => {
     const local = localStorage.getItem('carbon_tracker_logs');
     if (local) return JSON.parse(local);
-    // Seed with mock logs for initial beautiful visual trend lines
     return generateMockLogs();
   });
 
@@ -76,73 +210,23 @@ export function useCarbonData() {
           setUserId(session.user.id);
           setLoading(true);
           
-          // Load Profile
-          const { data: dbProfile, error: pError } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', session.user.id)
-            .single();
-            
-          if (!pError && dbProfile) {
-            setProfile({
-              onboarding_completed: dbProfile.onboarding_completed,
-              base_diet: dbProfile.base_diet as DietType,
-              base_travel_mode: dbProfile.base_travel_mode as CommuteMode,
-              base_travel_km: Number(dbProfile.base_travel_km),
-              base_home_energy_kwh: Number(dbProfile.base_home_energy_kwh),
-              base_heating_source: dbProfile.base_heating_source as HeatingSource,
-              base_flights: Number(dbProfile.base_flights ?? 0),
-              base_recycles: Boolean(dbProfile.base_recycles ?? true),
-              base_annual_emissions: Number(dbProfile.base_annual_emissions)
-            });
-          }
+          const dbProfile = await fetchDbProfile(session.user.id);
+          if (dbProfile) setProfile(dbProfile);
 
-          // Load Logs
-          const { data: dbLogs, error: lError } = await supabase
-            .from('carbon_logs')
-            .select('*')
-            .eq('user_id', session.user.id)
-            .order('date', { ascending: true });
+          const dbLogs = await fetchDbLogs(session.user.id);
+          if (dbLogs) setLogs(dbLogs);
 
-          if (!lError && dbLogs && dbLogs.length > 0) {
-            const mappedLogs: CarbonLog[] = dbLogs.map(item => ({
-              id: item.id,
-              user_id: item.user_id,
-              date: item.date,
-              commute_mode: item.commute_mode as CommuteMode,
-              commute_distance: Number(item.commute_distance),
-              commute_emissions: Number(item.commute_emissions),
-              diet_type: item.diet_type as DietType,
-              diet_emissions: Number(item.diet_emissions),
-              energy_kwh: Number(item.energy_kwh),
-              heating_source: item.heating_source as HeatingSource,
-              heating_kwh: Number(item.heating_kwh ?? 0),
-              energy_emissions: Number(item.energy_emissions),
-              total_emissions: Number(item.total_emissions)
-            }));
-            setLogs(mappedLogs);
-          }
-
-          // Load Badges
-          const { data: dbBadges, error: bError } = await supabase
-            .from('user_badges')
-            .select('badge_id, awarded_at')
-            .eq('user_id', session.user.id);
-
-          if (!bError && dbBadges) {
+          const dbBadges = await fetchDbBadges(session.user.id);
+          if (dbBadges) {
             const badgeIds = dbBadges.map(b => b.badge_id);
-            setBadges(prev => prev.map(badge => {
-              const matched = dbBadges.find(b => b.badge_id === badge.id);
-              return {
-                ...badge,
-                unlocked: badgeIds.includes(badge.id),
-                unlockedAt: matched ? matched.awarded_at : undefined
-              };
-            }));
+            setBadges(prev => prev.map(badge => ({
+              ...badge,
+              unlocked: badgeIds.includes(badge.id),
+              unlockedAt: dbBadges.find(b => b.badge_id === badge.id)?.awarded_at
+            })));
           }
         }
       } catch (err) {
-        // Failed to load from Supabase - falling back to localStorage
         void err;
       } finally {
         setLoading(false);
@@ -170,10 +254,7 @@ export function useCarbonData() {
   }, [habits]);
 
   /**
-   * Save onboarding answers, estimate annual base footprint
-   */
-  /**
-   * Unlock a specific badge
+   * Unlock a specific badge.
    */
   const unlockBadge = useCallback(async (badgeId: string) => {
     let alreadyUnlocked = false;
@@ -197,70 +278,19 @@ export function useCarbonData() {
   }, [userId]);
 
   /**
-   * Check conditions to award achievement badges
+   * Check conditions to award achievement badges.
    */
   const checkBadgesLogic = useCallback((allLogs: CarbonLog[], latestLog: CarbonLog) => {
-    // 1. Eco Commuter badge: 3 or more commutes using EV, Bus, Train, Biking, Walking
-    const ecoCommutesCount = allLogs.filter(log =>
-      ['ev_car', 'bus', 'train', 'bicycle', 'walking'].includes(log.commute_mode) &&
-      (log.commute_distance > 0 || ['bicycle', 'walking'].includes(log.commute_mode))
-    ).length;
-    if (ecoCommutesCount >= 3) {
-      unlockBadge('eco_commuter');
-    }
+    if (checkEcoCommuter(allLogs)) unlockBadge('eco_commuter');
+    if (checkGreenPlate(allLogs)) unlockBadge('green_plate');
 
-    // 2. Green Plate badge: 3 consecutive vegan or vegetarian meals
-    let vegetarianStreak = 0;
-    let hasGreenPlate = false;
-    for (let i = allLogs.length - 1; i >= 0; i--) {
-      if (['vegan', 'vegetarian'].includes(allLogs[i].diet_type)) {
-        vegetarianStreak++;
-        if (vegetarianStreak >= 3) {
-          hasGreenPlate = true;
-          break;
-        }
-      } else {
-        vegetarianStreak = 0; // broken streak
-      }
-    }
-    if (hasGreenPlate) {
-      unlockBadge('green_plate');
-    }
-
-    // 3. Carbon Cutter badge: Logged emissions under 30% of daily baseline average
-    const dailyBaseAverage = profile.base_annual_emissions / 365;
-    if (dailyBaseAverage > 0 && latestLog.total_emissions <= dailyBaseAverage * 0.7) {
-      unlockBadge('carbon_cutter');
-    }
-
-    // 4. Streak Master: logged activities for 5 consecutive days
-    if (allLogs.length >= 5) {
-      let consecutiveDays = 1;
-      let hasStreak = false;
-      for (let i = allLogs.length - 1; i > 0; i--) {
-        const d1 = new Date(allLogs[i].date);
-        const d2 = new Date(allLogs[i - 1].date);
-        const diffTime = Math.abs(d1.getTime() - d2.getTime());
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        
-        if (diffDays === 1) {
-          consecutiveDays++;
-          if (consecutiveDays >= 5) {
-            hasStreak = true;
-            break;
-          }
-        } else if (diffDays > 1) {
-          consecutiveDays = 1; // reset streak
-        }
-      }
-      if (hasStreak) {
-        unlockBadge('streak_master');
-      }
-    }
+    const dailyBaseAverage = profile.base_annual_emissions / BASELINES.daysInYear;
+    if (checkCarbonCutter(latestLog, dailyBaseAverage)) unlockBadge('carbon_cutter');
+    if (checkStreakMaster(allLogs)) unlockBadge('streak_master');
   }, [profile.base_annual_emissions, unlockBadge]);
 
   /**
-   * Save onboarding answers, estimate annual base footprint including flights & recycling.
+   * Save onboarding answers, estimate annual base footprint.
    */
   const completeOnboarding = useCallback(async (
     dietType: DietType,
@@ -294,11 +324,8 @@ export function useCarbonData() {
     };
 
     setProfile(updatedProfile);
-
-    // Dynamic badge check for completing onboarding
     unlockBadge('first_step');
 
-    // Sync to Supabase
     if (userId && isSupabaseConfigured && supabase) {
       await supabase.from('profiles').upsert({
         id: userId,
@@ -317,7 +344,7 @@ export function useCarbonData() {
   }, [userId, unlockBadge]);
 
   /**
-   * Add a daily activity log entry
+   * Add a daily activity log entry.
    */
   const addDailyLog = useCallback(async (input: DailyLogInput, logDate: string) => {
     const commuteEmissions = calculateCommuteEmissions(input.commute_distance, input.commute_mode);
@@ -341,18 +368,13 @@ export function useCarbonData() {
       total_emissions: totalEmissions
     };
 
-    // Prevent duplicate entries for the same date in local state (replace if exists)
     setLogs(prev => {
       const filtered = prev.filter(log => log.date !== logDate);
       const updated = [...filtered, newLog].sort((a, b) => a.date.localeCompare(b.date));
-      
-      // Perform dynamic badge checks after adding the log, using the updated logs array
       setTimeout(() => checkBadgesLogic(updated, newLog), 50);
-      
       return updated;
     });
 
-    // Sync to Supabase
     if (userId && isSupabaseConfigured && supabase) {
       await supabase.from('carbon_logs').upsert({
         user_id: userId,
@@ -372,7 +394,7 @@ export function useCarbonData() {
   }, [userId, checkBadgesLogic]);
 
   /**
-   * Toggle completion of daily eco-habits
+   * Toggle completion of daily eco-habits.
    */
   const toggleHabit = useCallback((habitId: string) => {
     setHabits(prev =>
@@ -383,7 +405,7 @@ export function useCarbonData() {
   }, []);
 
   /**
-   * Reset all data (for testing / demo purposing)
+   * Reset all data (for testing / demo purposing).
    */
   const resetAllData = useCallback(() => {
     localStorage.removeItem('carbon_tracker_profile');
@@ -409,7 +431,7 @@ export function useCarbonData() {
 
   // --- MEMOIZED CALCULATIONS FOR RENDERING ---
   
-  // Total aggregate breakdown (avoiding recalculations on every render)
+  // Total aggregate breakdown
   const emissionsBreakdown = useMemo<EmissionBreakdown>(() => {
     let commute = 0;
     let diet = 0;
@@ -432,10 +454,10 @@ export function useCarbonData() {
   // Aggregate savings
   const totalSavings = useMemo<number>(() => {
     let savings = 0;
-    const dailyBaseTravelKm = profile.base_travel_km / 365;
+    const dailyBaseTravelKm = profile.base_travel_km / BASELINES.daysInYear;
     const dailyBaseCommuteEmissions = calculateCommuteEmissions(dailyBaseTravelKm, profile.base_travel_mode);
-    const dailyBaseElectricityKwh = profile.base_home_energy_kwh / 30;
-    const dailyBaseHeatingKwh = profile.base_heating_source === 'none' ? 0 : (200 / 30);
+    const dailyBaseElectricityKwh = profile.base_home_energy_kwh / BASELINES.daysInMonth;
+    const dailyBaseHeatingKwh = profile.base_heating_source === 'none' ? 0 : (BASELINES.heatingKwhAssumption / BASELINES.daysInMonth);
     const dailyBaseEnergyEmissions = calculateEnergyEmissions(
       dailyBaseElectricityKwh,
       profile.base_heating_source,
@@ -463,9 +485,8 @@ export function useCarbonData() {
     }));
   }, [logs]);
 
-  // Generate monthly grouped trend data (for chart)
+  // Generate monthly grouped trend data
   const monthlyTrends = useMemo(() => {
-    // Group logs by week-ending dates or group last 30 logs in chunks of 5 days
     const chunks = [];
     const chunkSize = 5;
     for (let i = 0; i < logs.length; i += chunkSize) {
