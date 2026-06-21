@@ -58,6 +58,7 @@ export const HabitsChecklist: React.FC<HabitsChecklistProps> = ({
             }`}
             role="checkbox"
             aria-checked={habit.completed}
+            aria-label={`Toggle habit: ${habit.title}`}
             tabIndex={0}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {

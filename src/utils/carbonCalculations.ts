@@ -18,6 +18,8 @@ export interface UserProfile {
   base_travel_km: number; // annual
   base_home_energy_kwh: number; // monthly
   base_heating_source: HeatingSource;
+  base_flights: number; // annual flights
+  base_recycles: boolean; // sorts waste
   base_annual_emissions: number; // kg CO2e
 }
 
@@ -104,7 +106,9 @@ export function calculateBaseAnnualEmissions(
   annualTravelKm: number,
   travelMode: CommuteMode,
   monthlyElectricityKwh: number,
-  heatingSource: HeatingSource
+  heatingSource: HeatingSource,
+  annualFlights: number,
+  recycles: boolean
 ): number {
   // 1. Annual diet emissions (365 days)
   const annualDiet = calculateDietEmissions(dietType) * 365;
@@ -113,15 +117,20 @@ export function calculateBaseAnnualEmissions(
   const annualCommute = calculateCommuteEmissions(annualTravelKm, travelMode);
   
   // 3. Annual home energy (12 months)
-  // Assume heating uses roughly 150 kWh equivalent monthly on average if gas/electric, or we scale monthly electricity
   const monthlyElectricityEmissions = Math.max(0, monthlyElectricityKwh) * EMISSION_FACTORS.energy.electricity;
   const estimatedHeatingKwhMonthly = heatingSource === 'none' ? 0 : 200; // simplified onboarding assumption
   const heatingFactor = EMISSION_FACTORS.energy.heating[heatingSource] ?? 0;
   const monthlyHeatingEmissions = estimatedHeatingKwhMonthly * heatingFactor;
-  
   const annualEnergy = (monthlyElectricityEmissions + monthlyHeatingEmissions) * 12;
   
-  return Number((annualDiet + annualCommute + annualEnergy).toFixed(2));
+  // 4. Flights emissions (e.g. average 500 kg CO2e per flight)
+  const flightsEmissions = annualFlights * 500;
+  
+  // 5. Recycling waste management savings (e.g. subtract 250 kg CO2e if they recycle)
+  const recyclingSavings = recycles ? 250 : 0;
+  
+  const total = annualDiet + annualCommute + annualEnergy + flightsEmissions - recyclingSavings;
+  return Number(Math.max(0, total).toFixed(2));
 }
 
 /**

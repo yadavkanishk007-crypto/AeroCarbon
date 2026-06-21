@@ -1,0 +1,27 @@
+# Ignore git history and settings
+.git/
+.gitignore
+
+# Ignore node modules and local environment files
+node_modules/
+.env
+.env.*
+.eslintcache
+.prettiercache
+.vscode/
+.idea/
+
+# Only upload the compiled production assets (dist) and config files
+# app.yaml needs to be in root
+src/
+public/
+tests/
+tsconfig*.json
+eslint.config.js
+package*.json
+vite.config.ts
+database.sql
+README.md
+walkthrough.md
+task.md
+implementation_plan.md

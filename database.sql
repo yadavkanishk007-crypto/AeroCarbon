@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS profiles (
   base_travel_km NUMERIC DEFAULT 0,
   base_home_energy_kwh NUMERIC DEFAULT 0,
   base_heating_source TEXT DEFAULT 'none',
+  base_flights INTEGER DEFAULT 0,
+  base_recycles BOOLEAN DEFAULT TRUE,
   base_annual_emissions NUMERIC DEFAULT 0
 );
 

@@ -42,6 +42,8 @@ export const mockUserProfile: UserProfile = {
   base_travel_km: 12000, // ~33 km/day
   base_home_energy_kwh: 360, // ~12 kWh/day
   base_heating_source: 'gas',
+  base_flights: 2,
+  base_recycles: true,
   base_annual_emissions: 8420.5 // base annual footprint
 };
 

@@ -10,7 +10,9 @@ interface OnboardingQuizProps {
     travelKm: number,
     travelMode: CommuteMode,
     monthlyKwh: number,
-    heatSource: HeatingSource
+    heatSource: HeatingSource,
+    flights: number,
+    recycles: boolean
   ) => void;
 }
 
@@ -30,7 +32,7 @@ export const OnboardingQuiz: React.FC<OnboardingQuizProps> = ({ onComplete }) =>
   const prevStep = () => setStep(prev => Math.max(prev - 1, 1));
 
   const handleSubmit = () => {
-    onComplete(diet, travelKm, travelMode, energyKwh, heatingSource);
+    onComplete(diet, travelKm, travelMode, energyKwh, heatingSource, flights, recycles);
   };
 
   const stepsDetails = [

@@ -1,0 +1,22 @@
+runtime: python311
+instance_class: F1
+
+handlers:
+  # Serve static assets (JS/CSS/images) from the assets folder with cache control
+  - url: /assets/(.*)
+    static_files: dist/assets/\1
+    upload: dist/assets/(.*)
+    expiration: "365d"
+    secure: always
+
+  # Serve other root static files (icons, manifest, robots, etc.)
+  - url: /(.*\.(json|ico|js|css|png|jpg|svg|txt|xml|webmanifest))$
+    static_files: dist/\1
+    upload: dist/(.*\.(json|ico|js|css|png|jpg|svg|txt|xml|webmanifest))$
+    secure: always
+
+  # SPA Routing: fallback all other routes to index.html
+  - url: /.*
+    static_files: dist/index.html
+    upload: dist/index.html
+    secure: always

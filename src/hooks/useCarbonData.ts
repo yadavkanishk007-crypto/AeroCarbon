@@ -37,6 +37,8 @@ export function useCarbonData() {
       base_travel_km: 0,
       base_home_energy_kwh: 0,
       base_heating_source: 'none',
+      base_flights: 0,
+      base_recycles: true,
       base_annual_emissions: 0
     };
   });
@@ -89,6 +91,8 @@ export function useCarbonData() {
               base_travel_km: Number(dbProfile.base_travel_km),
               base_home_energy_kwh: Number(dbProfile.base_home_energy_kwh),
               base_heating_source: dbProfile.base_heating_source as HeatingSource,
+              base_flights: Number(dbProfile.base_flights ?? 0),
+              base_recycles: Boolean(dbProfile.base_recycles ?? true),
               base_annual_emissions: Number(dbProfile.base_annual_emissions)
             });
           }
@@ -138,7 +142,8 @@ export function useCarbonData() {
           }
         }
       } catch (err) {
-        console.error('Error fetching data from Supabase, staying on LocalStorage: ', err);
+        // Failed to load from Supabase - falling back to localStorage
+        void err;
       } finally {
         setLoading(false);
       }
@@ -255,21 +260,25 @@ export function useCarbonData() {
   }, [profile.base_annual_emissions, unlockBadge]);
 
   /**
-   * Save onboarding answers, estimate annual base footprint
+   * Save onboarding answers, estimate annual base footprint including flights & recycling.
    */
   const completeOnboarding = useCallback(async (
     dietType: DietType,
     travelKm: number,
     travelMode: CommuteMode,
     monthlyKwh: number,
-    heatSource: HeatingSource
+    heatSource: HeatingSource,
+    flights: number,
+    recycles: boolean
   ) => {
     const annualEst = calculateBaseAnnualEmissions(
       dietType,
       travelKm,
       travelMode,
       monthlyKwh,
-      heatSource
+      heatSource,
+      flights,
+      recycles
     );
 
     const updatedProfile: UserProfile = {
@@ -279,6 +288,8 @@ export function useCarbonData() {
       base_travel_km: travelKm,
       base_home_energy_kwh: monthlyKwh,
       base_heating_source: heatSource,
+      base_flights: flights,
+      base_recycles: recycles,
       base_annual_emissions: annualEst
     };
 
@@ -297,6 +308,8 @@ export function useCarbonData() {
         base_travel_mode: travelMode,
         base_home_energy_kwh: monthlyKwh,
         base_heating_source: heatSource,
+        base_flights: flights,
+        base_recycles: recycles,
         base_annual_emissions: annualEst,
         updated_at: new Date().toISOString()
       });
@@ -385,6 +398,8 @@ export function useCarbonData() {
       base_travel_km: 0,
       base_home_energy_kwh: 0,
       base_heating_source: 'none',
+      base_flights: 0,
+      base_recycles: true,
       base_annual_emissions: 0
     });
     setLogs([]);

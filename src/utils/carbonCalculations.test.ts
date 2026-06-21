@@ -81,7 +81,7 @@ describe('Carbon Calculation Formulas', () => {
   });
 
   describe('Base Onboarding Estimation', () => {
-    it('should estimate base annual emissions correctly', () => {
+    it('should estimate base annual emissions correctly with zero flights and no recycling', () => {
       // Diet: vegetarian (2.0/day * 365 = 730)
       // Travel: 12000 km petrol (12000 * 0.170 = 2040)
       // Electricity: 300 kWh/month (300 * 0.350 = 105)
@@ -93,9 +93,32 @@ describe('Carbon Calculation Formulas', () => {
         12000,
         'petrol_car',
         300,
-        'gas'
+        'gas',
+        0,
+        false
       );
       expect(annualEmissions).toBe(4510.00);
+    });
+
+    it('should estimate base annual emissions including flights and recycling', () => {
+      // Diet: vegetarian (2.0/day * 365 = 730)
+      // Travel: 12000 km petrol (12000 * 0.170 = 2040)
+      // Electricity: 300 kWh/month (300 * 0.350 = 105)
+      // Heating: gas (200 kWh/month assumed * 0.200 = 40)
+      // Energy Annual: (105 + 40) * 12 = 1740
+      // Flights: 2 flights * 500 = 1000
+      // Recycles: true = -250
+      // Expected Total: 730 + 2040 + 1740 + 1000 - 250 = 5260.00 kg
+      const annualEmissions = calculateBaseAnnualEmissions(
+        'vegetarian',
+        12000,
+        'petrol_car',
+        300,
+        'gas',
+        2,
+        true
+      );
+      expect(annualEmissions).toBe(5260.00);
     });
   });
 
@@ -108,6 +131,8 @@ describe('Carbon Calculation Formulas', () => {
         base_travel_km: 14600, // 40 km/day -> 40 * 0.170 = 6.8 kg/day
         base_home_energy_kwh: 300, // 10 kWh/day -> 10 * 0.350 = 3.5 kg/day
         base_heating_source: 'none',
+        base_flights: 0,
+        base_recycles: true,
         base_annual_emissions: 5037.00
       };
 
